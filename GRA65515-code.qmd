@@ -1,0 +1,328 @@
+---
+title: "GRA65515 - Quantitative Risk and Asset Management"
+date: "`r Sys.Date()`"
+format: 
+  html:
+    embed-resources: true
+    self-contained-math: true
+toc: true
+editor: 
+  markdown: 
+    wrap: 72
+---
+
+```{r}
+library(moments)
+library(kableExtra)
+library(dplyr)
+library(lubridate)
+```
+
+## Question 1
+
+Simulate data from a simple stochastic volatility model with leverage
+(meaning that volatility is affected by past returns). The
+data-generating-process is $$ r_t = \beta e^{0.5h_t} \epsilon_t$$ where
+$r_t$ is a daily log returns, and log volatility changes through time
+according to
+$$h_t = \phi h_{t-1} + \rho \sigma \epsilon_{t-1} + \sigma \sqrt{1-\rho^2}u_t$$
+with $\epsilon_t \sim N(0,1)$ and $u_t \sim N(0,1)$
+
+Simulate one million observations, then throw away the first 10000. Use
+the following parameters:
+$\beta = 0.01, \phi = 0.99, \sigma = 0.1, \rho = -0.8$
+
+```{r}
+# -- data simulation process --
+# seed for producibility
+set.seed(123)
+
+# parameters
+beta = 0.01
+phi = 0.99
+s = 0.1
+rho = -0.8
+
+# simulate noise
+nsim = 1000000
+e = rnorm(nsim)
+u = rnorm(nsim)
+
+# create empty vectors
+h = numeric(length=nsim)
+r = numeric(length=nsim)
+
+# log volatility changes through time
+for (t in 2:nsim) {
+  h[t] = phi*h[t-1] + rho*s*e[t-1] + s*sqrt(1-rho^2)*u[t]
+  r[t] = beta*exp(0.5*h[t])*e[t]
+}
+
+# discard first 10000 observations
+h = h[10001:nsim]
+r = r[10001:nsim]
+
+# -- mean and std of daily log returns --
+mean(r)
+sd(r)
+```
+
+```{r}
+# --- compute skew and kurtosis at different horizons ---
+horizon = c(1,20,250)
+
+# cumulative log returns
+n = length(r)
+tab1 = data.frame()
+for (h in horizon) {
+  len = n-h+1
+  temp = numeric(len)
+  for (j in 1:len) {
+    temp[j] = sum(r[j:(j+h-1)])
+  }
+  # skewness and kurtosis of cumulative log returns
+  skew = skewness(temp)
+  kurt = kurtosis(temp)
+  # VaR at 95% and 99%
+  loss = -temp
+  var95 = quantile(loss, 0.95, na.rm = TRUE)[['95%']]
+  var99 = quantile(loss, 0.99, na.rm = TRUE)[['99%']]
+  # store results in a dataframe
+  tab1 <- rbind(tab1, data.frame(Horizon = h, 
+                               Skewness = skew, 
+                               Kurtosis = kurt,
+                               VaR_0.95 = var95,
+                               VaR_0.99 = var99))
+  # histogram
+  hist(temp, breaks=150, freq=FALSE, xlab='', ylab='', 
+     main=paste('Cumulative log returns at horizon',h,'day(s)'),
+     cex.lab=0.8, cex.axis=0.8, cex.main=0.9,
+     border='white')
+}
+
+# display the skewness and kurtosis at different horizons
+kable(tab1, digits=3)
+```
+
+```{r}
+# histogram of yearly cumulative log returns
+hist(temp, breaks=150, freq=FALSE, xlab='', ylab='', 
+     main='Yearly cumulative log returns',
+     cex.lab=0.8, cex.axis=0.8, cex.main=0.9,
+     border='white')
+```
+
+## Question 2
+
+The file `Portfolios_formed_on_OP_daily.csv` has total daily returns
+(not logs) for portfolio of firms sorted from lowest to highest
+profitability (from the Kenneth French database). Notice that this is
+profitability in the recent past, not projected future profitability.
+Assume the interest rate is constant at 7% annual, and, in the questions
+below, interpret “returns” as meaning excess returns. (That is,
+cumulative returns, Sharpe ratios etc... should be computed on excess
+returns). Consider portfolio of quintiles (i.e. “Lo 20”, “"Qnt 2","Qnt
+3","Qnt 4", "Hi 20")
+
+```{r}
+# load the data
+data = read.csv('Portfolios_formed_on_OP_daily.csv', skip=22)
+
+# convert date column to date format
+date = as.Date(as.character(data$X), format="%Y%m%d")
+
+# select portfolio of quintiles
+data = data[,c('Lo.20','Qnt.2','Qnt.3','Qnt.4','Hi.20')]/100
+```
+
+For each of the give portfolios, compute the average annualized (excess)
+return, the annualized standard deviation, the annualized Sharpe ratio
+
+```{r}
+# interest rate is constant at 7% annual
+interest_rate = 0.07
+
+# calculate annualized excess mean and std of each portfolio
+means = colMeans(data)*252 - interest_rate
+sds = apply(data, 2, sd)*sqrt(252)
+
+# calculate annualized sharpe ratio of each portfolio
+tab2 = data.frame(annualized_return = means*100,
+                  annualized_std = sds*100,
+                  sharpe_ratio = means/sds)
+
+# display the annualized excess mean, std, and Sharpe ratio
+kable(tab2, digits = 3)
+```
+
+Plot the cumulative returns (not log returns) for the first and last
+quintile, assuming the portfolio is reinvested every day
+
+```{r}
+# plot the Cumulative excess returns of lo.20 and hi.20
+plot(date, cumprod((1+data$Lo.20-interest_rate/252))-1, 
+     type='l', xlab='', ylab='', cex.lab=0.8, cex.axis=0.8, 
+     cex.main=0.9, main='Cumulative excess returns', 
+     lwd=2, col='darkred', ylim = c(-1,15))
+lines(date, cumprod((1+data$Hi.20-interest_rate/252))-1, 
+      lwd=2, col='darkgreen')
+grid(col='gray')
+legend(legend=c('Lo.20','Hi.20'),
+       col=c('darkred','darkgreen'),
+       lwd=2, x='topleft', cex = 0.8)
+```
+
+Compute the (approximate) market daily returns as the equal-weight
+average of the returns of the 5 portfolios. Plot the log cumulative
+returns of the portfolio (reinvested at each day)
+
+```{r}
+# construct new portfolio of equal weight of the five portfolios
+market = apply(data, 1, mean)
+
+# Calculate log returns of the new portfolio
+log_market = log(1+market)
+
+# plot the log cumulative excess returns of the portfolio
+plot(date, cumsum(log_market-interest_rate/252), type='l',
+     xlab='', ylab='', cex.lab=0.8, cex.axis=0.8,
+     main='Log cumulative excess returns of the portfolio', 
+     cex.main=0.9, lwd=2, col='blue')
+grid(col='gray')
+```
+
+Consider investing in each of the five portfolios. Assume 7% interest
+rate, and that there are no limits on shorting or leverage. Use the
+historical mean and the covariance matrix to compute half-Kelly weights
+and report them. Also report the sum of the weights and the sum of the
+absolute value of the weights
+
+```{r}
+# annualized half-Kelly ratio of each portfolio
+tab2$half_kelly = 0.5*means/(sds^2)
+
+# display the half-Kelly weights
+kable(tab2, digits=3)
+
+# sum of the weights
+sum(tab2$half_kelly)
+```
+
+A recently proposed alternative to mean-variance is Enhanced Portfolio
+Optimization (EPO), which can be seen as merging elements of
+mean-variance and volatility weighting. EPO implies replacing the
+covariance matrix V with $$ V_{epo} = \alpha V + (1-\alpha)D $$ where D
+is a diagonal matrix with $D[i,i]=V[i,i]$ and $\alpha =1/3$
+
+The portfolio weights are then found with the mean-variance formula,
+which is using half-Kelly $$ w=0.5 V_{epo}^{-1}m $$ where
+$m=\mathbb {E}(R)$. Compute the Sharpe ratio of the EPO portfolio
+
+```{r}
+# ------------
+# half-Kelly 
+m = means/252 # daily mean E(R)
+V = cov(data) # daily covariance matrix of the five portfolios
+w = 0.5 * solve(V) %*% m # alpha = 0.5 means half-Kelly
+port_hk = as.matrix(data) %*% w
+
+# ------------
+# Enhanced Portfolio Optimization (EPO)
+D = diag(diag(V))
+alpha = 1/3
+V_epo = alpha*V + (1-alpha)*D
+w_epo = 0.5 * solve(V_epo) %*% m
+port_epo = as.matrix(data) %*% w_epo
+
+# ------------
+tab3 = data.frame("HK" = w,"EPO" = w_epo)
+
+# calculate annualized excess mean and std of maximize expected portfolio log returns and Enhanced Portfolio Optimization (EPO)
+mean_hk = mean(port_hk)*252 - interest_rate
+sd_hk = sd(port_hk)*sqrt(252)
+mean_epo = mean(port_epo)*252 - interest_rate
+sd_epo = sd(port_epo)*sqrt(252)
+
+# ------------
+tab4 = data.frame(annualized_return = c(mean_epo*100, mean_hk*100),
+                  annualized_std = c(sd_epo*100, sd_hk*100),
+                  sharpe_ratio = c(mean_epo/sd_epo, mean_hk/sd_hk))
+row.names(tab4) = c('EPO', 'HK')
+
+# display the results
+kable(tab3, digits=3)
+kable(tab4, digits=3)
+```
+
+Consider monthly cumulative log returns. (Approximate the market as the
+equal-weight average of the quintiles portfolios). Compute the 5%
+percentile divided by std for cumulative monthly log returns
+
+```{r}
+# calculate log returns
+log_returns = apply(data,2,function(x) log(1+x))
+
+# resample to monthly cumulative log returns
+month_log = cbind(date, as.data.frame(log_returns), log_market) %>% 
+  mutate(month = floor_date(date, 'month')) %>%
+  group_by(month) %>%
+  summarise(across(-date, ~sum(.x, na.rm = TRUE)))
+
+# rename the columns
+colnames(month_log)[-1] = c(colnames(data),'market')
+
+# 5% percentile of monthly cumulative log returns
+mqt = apply(month_log[-1], 2, function(x) quantile(-x, 0.95))
+
+# std of monthly cumulative log returns
+msd = apply(month_log[-1], 2, sd)
+
+tab5 = data.frame(quantile=mqt*100, std=msd*100, ratio=mqt/msd)
+kable(tab5, digits=3)
+```
+
+Skewness and annualized standard deviation of the quintile portfolios
+and the "market" (defined as the equal-weighted average of the
+quintiles)
+
+Lo.20 is more left-skewed than Hi.20, also has the highest annualized
+standard deviation
+
+```{r}
+skewqnt = apply(cbind(data,market),2,skewness)
+stdqnt = apply(cbind(data,market),2,sd)*sqrt(252)
+tab6 = data.frame(skewness=skewqnt, std=stdqnt*100)
+kable(tab6, digits=3)
+```
+
+```{r}
+# correlation between pairs of portfolios
+tab7 = cor(cbind(data,market))
+kable(tab7, digits=3)
+```
+
+```{r}
+# log returns of the portfolios
+log_port_epo = log(1+port_epo)
+log_port_hk = log(1+port_hk)
+
+plot(date, cumsum(log_port_epo-log(1+interest_rate/252)), type='l',
+     xlab='', ylab='', cex.lab=0.8, cex.axis=0.8,
+     main='Log cumulative excess returns of the portfolios', 
+     cex.main=0.9, lwd=2, col='darkgreen', ylim=c(-1,8))
+lines(date, cumsum(log_port_hk-log(1+interest_rate/252)), col='darkred',lwd=2)
+legend(legend=c('Half-Kelly','EPO'),
+       col=c('darkred','darkgreen'),
+       lwd=2, x='topleft', cex = 0.8)
+grid(col='gray')
+```
+
+```{r}
+write.csv(tab1, file = "q1.csv")
+write.csv(tab2, file = "q2_metrics.csv")
+write.csv(tab3, file = "weights_epo.csv")
+write.csv(tab4, file = "epo_hk_metrics.csv")
+write.csv(tab5, file = "tail_ratio.csv")
+write.csv(tab6, file = 'skewqnt.csv')
+write.csv(tab7, file = 'corr.csv')
+```
